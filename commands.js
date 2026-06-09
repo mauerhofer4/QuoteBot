@@ -1,5 +1,4 @@
 import 'dotenv/config';
-import { getRPSChoices } from './game.js';
 import { capitalize, InstallGlobalCommands, InstallGuildCommands } from './utils.js';
 
 // Get the game choices from game.js
@@ -26,7 +25,15 @@ const TEST_COMMAND = {
   contexts: [0, 1, 2],
 };
 
-const ALL_COMMANDS = [TEST_COMMAND];
+const QUOTE_COMMAND = {
+  name: 'quote',
+  description: 'Get a random quote from the API',
+  type: 1,
+  integration_types: [0, 1],
+  contexts: [0, 1, 2],
+};
+
+const ALL_COMMANDS = [TEST_COMMAND, QUOTE_COMMAND];
 
 // InstallGlobalCommands(process.env.APP_ID, ALL_COMMANDS);
 InstallGuildCommands(process.env.APP_ID, process.env.GUILD_ID, ALL_COMMANDS);

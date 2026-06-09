@@ -9,12 +9,26 @@ import {
   verifyKeyMiddleware,
 } from 'discord-interactions';
 import { getRandomEmoji, DiscordRequest } from './utils.js';
-import { getShuffledOptions, getResult } from './game.js';
+import { fetchRandomQuote } from './botApi.js';
 
 // Create an express app
 const app = express();
 // Get port, or default to 3000
 const PORT = process.env.PORT || 3000;
+const API_BASE_URL = (() => {
+  const configuredUrl = process.env.API_BASE_URL || 'http://localhost:8000';
+
+  try {
+    const url = new URL(configuredUrl);
+    if (url.hostname === 'api') {
+      url.hostname = 'localhost';
+      return url.toString().replace(/\/$/, '');
+    }
+    return url.toString().replace(/\/$/, '');
+  } catch {
+    return 'http://localhost:8000';
+  }
+})();
 // To keep track of our active games
 const activeGames = {};
 
@@ -56,6 +70,40 @@ app.post('/interactions', verifyKeyMiddleware(process.env.PUBLIC_KEY), async fun
           ]
         },
       });
+    }
+
+    if (name === 'quote') {
+      try {
+        const quote = await fetchRandomQuote(API_BASE_URL);
+        const author = quote.author ? ` - ${quote.author}` : '';
+
+        return res.send({
+          type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+          data: {
+            flags: InteractionResponseFlags.IS_COMPONENTS_V2,
+            components: [
+              {
+                type: MessageComponentTypes.TEXT_DISPLAY,
+                content: `"${quote.text}"${author}`,
+              },
+            ],
+          },
+        });
+      } catch (error) {
+        console.error('quote command failed', error);
+        return res.send({
+          type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+          data: {
+            flags: InteractionResponseFlags.IS_COMPONENTS_V2,
+            components: [
+              {
+                type: MessageComponentTypes.TEXT_DISPLAY,
+                content: 'Quote API is unavailable right now.',
+              },
+            ],
+          },
+        });
+      }
     }
 
     console.error(`unknown command: ${name}`);
