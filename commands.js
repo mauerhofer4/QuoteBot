@@ -34,6 +34,30 @@ const QUOTE_COMMAND = {
 };
 
 const ALL_COMMANDS = [TEST_COMMAND, QUOTE_COMMAND];
+// simple test 2 command with options
+const TEST2_COMMAND = {
+  name: 'test2',
+  description: 'Command with options',
+  type: 1,
+  integration_types: [0, 1],
+  contexts: [0, 1, 2],
+  options: [
+    {
+      name: 'option1',
+      description: 'First option',
+      type: 3,
+      required: true,
+    },
+    {
+      name: 'option2',
+      description: 'Second option',
+      type: 3,
+      required: false,
+    },
+  ],
+};
+
+const ALL_COMMANDS = [TEST_COMMAND, TEST2_COMMAND];
 
 // InstallGlobalCommands(process.env.APP_ID, ALL_COMMANDS);
 InstallGuildCommands(process.env.APP_ID, process.env.GUILD_ID, ALL_COMMANDS);

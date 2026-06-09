@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
+import { ActivityType, Client } from 'discord.js';
 import {
   ButtonStyleTypes,
   InteractionResponseFlags,
@@ -31,6 +32,25 @@ const API_BASE_URL = (() => {
 })();
 // To keep track of our active games
 const activeGames = {};
+
+const client = new Client({ intents: [] });
+
+client.once('ready', () => {
+  console.log(`Logged in as ${client.user.tag}`);
+  client.user.setPresence({
+    status: 'online',
+    activities: [
+      {
+        name: 'QuoteBot',
+        type: ActivityType.Playing,
+      },
+    ],
+  });
+});
+
+client.login(process.env.DISCORD_TOKEN).catch((error) => {
+  console.error('Failed to log in to Discord', error);
+});
 
 /**
  * Interactions endpoint URL where Discord will send HTTP requests
@@ -66,6 +86,23 @@ app.post('/interactions', verifyKeyMiddleware(process.env.PUBLIC_KEY), async fun
               type: MessageComponentTypes.TEXT_DISPLAY,
               // Fetches a random emoji to send from a helper function
               content: `hello world ${getRandomEmoji()}`
+            }
+          ]
+        },
+      });
+    }
+    if (name === 'test2') {
+      const option1 = data.options.find((opt) => opt.name === 'option1')?.value;
+      const option2 = data.options.find((opt) => opt.name === 'option2')?.value;
+
+      return res.send({
+        type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+        data: {
+          flags: InteractionResponseFlags.IS_COMPONENTS_V2,
+          components: [
+            {
+              type: MessageComponentTypes.TEXT_DISPLAY,
+              content: `Option 1: ${option1}, Option 2: ${option2}`
             }
           ]
         },
