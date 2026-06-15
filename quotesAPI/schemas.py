@@ -1,4 +1,5 @@
 from datetime import datetime
+import uuid
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
@@ -16,8 +17,8 @@ class QuoteLineUpdate(BaseModel):
 
 
 class QuoteLineRead(BaseModel):
-    id: int
-    quote_id: int
+    id: uuid.UUID
+    quote_id: uuid.UUID
     line_number: int
     speaker: str
     nickname: str | None
@@ -27,6 +28,7 @@ class QuoteLineRead(BaseModel):
 
 
 class QuoteCreate(BaseModel):
+    guild_id: int
     context: str | None = Field(default=None, max_length=4000)
     author: str = Field(min_length=1, max_length=120)
     datetime_said: datetime | None = None
@@ -34,6 +36,7 @@ class QuoteCreate(BaseModel):
 
 
 class QuoteUpdate(BaseModel):
+    guild_id: int | None = Field(default=None)
     context: str | None = Field(default=None, max_length=4000)
     author: str | None = Field(default=None, min_length=1, max_length=120)
     datetime_said: datetime | None = None
@@ -41,9 +44,10 @@ class QuoteUpdate(BaseModel):
 
 
 class QuoteRead(BaseModel):
-    id: int
+    id: uuid.UUID
     context: str | None
     author: str
+    guild_id: int
     datetime_added: datetime
     datetime_said: datetime | None
     lines: list[QuoteLineRead]
