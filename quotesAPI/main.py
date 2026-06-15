@@ -13,7 +13,7 @@ from models import Base, Quote, QuoteLine
 from schemas import QuoteCreate, QuoteLineCreate, QuoteLineRead, QuoteLineUpdate, QuoteRead, QuoteUpdate
 
 
-app = FastAPI(title="QuoteBot API")
+app = FastAPI(title="QuoteBot API", version="0.2")
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
