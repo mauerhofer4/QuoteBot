@@ -5,10 +5,11 @@ from collections.abc import AsyncGenerator
 from fastapi import Depends, FastAPI, HTTPException, status
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from database import async_session, engine
-from models import Base, Quote
-from schemas import QuoteCreate, QuoteRead, QuoteUpdate
+from models import Base, Quote, QuoteLine
+from schemas import QuoteCreate, QuoteLineCreate, QuoteLineRead, QuoteLineUpdate, QuoteRead, QuoteUpdate
 
 
 app = FastAPI(title="QuoteBot API")
@@ -25,6 +26,22 @@ async def startup() -> None:
         await connection.run_sync(Base.metadata.create_all)
 
 
+def quote_select():
+    return select(Quote).options(selectinload(Quote.lines))
+
+
+async def load_quote(session: AsyncSession, quote_id: int) -> Quote | None:
+    result = await session.execute(quote_select().where(Quote.id == quote_id))
+    return result.scalar_one_or_none()
+
+
+async def load_line(session: AsyncSession, quote_id: int, line_id: int) -> QuoteLine | None:
+    result = await session.execute(
+        select(QuoteLine).where(QuoteLine.quote_id == quote_id, QuoteLine.id == line_id)
+    )
+    return result.scalar_one_or_none()
+
+
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -32,13 +49,13 @@ async def health() -> dict[str, str]:
 
 @app.get("/quotes", response_model=list[QuoteRead])
 async def list_quotes(session: AsyncSession = Depends(get_session)) -> list[Quote]:
-    result = await session.execute(select(Quote).order_by(Quote.id.desc()))
+    result = await session.execute(quote_select().order_by(Quote.id.desc()))
     return list(result.scalars().all())
 
 
 @app.get("/quotes/random", response_model=QuoteRead)
 async def get_random_quote(session: AsyncSession = Depends(get_session)) -> Quote:
-    result = await session.execute(select(Quote).order_by(Quote.id.desc()))
+    result = await session.execute(quote_select().order_by(Quote.id.desc()))
     quotes = list(result.scalars().all())
     if not quotes:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No quotes found")
@@ -47,7 +64,9 @@ async def get_random_quote(session: AsyncSession = Depends(get_session)) -> Quot
 
 @app.get("/quotes/latest", response_model=QuoteRead)
 async def get_latest_quote(session: AsyncSession = Depends(get_session)) -> Quote:
-    result = await session.execute(select(Quote).order_by(Quote.datetime_added.desc(), Quote.id.desc()).limit(1))
+    result = await session.execute(
+        quote_select().order_by(Quote.datetime_added.desc(), Quote.id.desc()).limit(1)
+    )
     quote = result.scalar_one_or_none()
     if quote is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No quotes found")
@@ -58,16 +77,17 @@ async def get_latest_quote(session: AsyncSession = Depends(get_session)) -> Quot
 async def search_quotes(query: str, session: AsyncSession = Depends(get_session)) -> list[Quote]:
     search = f"%{query.strip()}%"
     result = await session.execute(
-        select(Quote)
+        quote_select()
+        .join(Quote.lines)
         .where(
             or_(
-                Quote.quotetext.ilike(search),
                 Quote.context.ilike(search),
                 Quote.author.ilike(search),
-                Quote.name.ilike(search),
-                Quote.nickname.ilike(search),
+                QuoteLine.speaker.ilike(search),
+                QuoteLine.text.ilike(search),
             )
         )
+        .distinct()
         .order_by(Quote.id.desc())
     )
     return list(result.scalars().all())
@@ -75,25 +95,39 @@ async def search_quotes(query: str, session: AsyncSession = Depends(get_session)
 
 @app.get("/quotes/by-author/{author}", response_model=list[QuoteRead])
 async def get_quotes_by_author(author: str, session: AsyncSession = Depends(get_session)) -> list[Quote]:
-    result = await session.execute(select(Quote).where(Quote.author.ilike(author)).order_by(Quote.id.desc()))
+    result = await session.execute(
+        quote_select().where(Quote.author.ilike(f"%{author}%")).order_by(Quote.id.desc())
+    )
     return list(result.scalars().all())
 
 
-@app.get("/quotes/by-name/{name}", response_model=list[QuoteRead])
-async def get_quotes_by_name(name: str, session: AsyncSession = Depends(get_session)) -> list[Quote]:
-    result = await session.execute(select(Quote).where(Quote.name.ilike(name)).order_by(Quote.id.desc()))
+@app.get("/quotes/by-speaker/{speaker}", response_model=list[QuoteRead])
+async def get_quotes_by_speaker(speaker: str, session: AsyncSession = Depends(get_session)) -> list[Quote]:
+    result = await session.execute(
+        quote_select().join(Quote.lines).where(QuoteLine.speaker.ilike(f"%{speaker}%")).distinct().order_by(Quote.id.desc())
+    )
     return list(result.scalars().all())
 
 
 @app.get("/quotes/by-nickname/{nickname}", response_model=list[QuoteRead])
 async def get_quotes_by_nickname(nickname: str, session: AsyncSession = Depends(get_session)) -> list[Quote]:
-    result = await session.execute(select(Quote).where(Quote.nickname.ilike(nickname)).order_by(Quote.id.desc()))
+    result = await session.execute(
+        quote_select().join(Quote.lines).where(QuoteLine.nickname.ilike(f"%{nickname}%")).distinct().order_by(Quote.id.desc())
+    )
     return list(result.scalars().all())
+
+
+@app.get("/quotes/{quote_id}/lines", response_model=list[QuoteLineRead])
+async def get_quote_lines(quote_id: int, session: AsyncSession = Depends(get_session)) -> list[QuoteLine]:
+    quote = await load_quote(session, quote_id)
+    if quote is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote not found")
+    return list(quote.lines)
 
 
 @app.get("/quotes/{quote_id}", response_model=QuoteRead)
 async def get_quote(quote_id: int, session: AsyncSession = Depends(get_session)) -> Quote:
-    quote = await session.get(Quote, quote_id)
+    quote = await load_quote(session, quote_id)
     if quote is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote not found")
     return quote
@@ -103,23 +137,27 @@ async def get_quote(quote_id: int, session: AsyncSession = Depends(get_session))
 async def create_quote(payload: QuoteCreate, session: AsyncSession = Depends(get_session)) -> Quote:
     now = datetime.now(timezone.utc)
     quote = Quote(
-        quotetext=payload.quotetext,
         context=payload.context,
         author=payload.author,
-        name=payload.name,
-        nickname=payload.nickname,
         datetime_added=now,
         datetime_said=payload.datetime_said or now,
     )
+    quote.lines = [
+        QuoteLine(line_number=index + 1, speaker=line.speaker, nickname=line.nickname, text=line.text)
+        for index, line in enumerate(payload.lines)
+    ]
     session.add(quote)
     await session.commit()
     await session.refresh(quote)
-    return quote
+    fresh_quote = await load_quote(session, quote.id)
+    if fresh_quote is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to load created quote")
+    return fresh_quote
 
 
 @app.patch("/quotes/{quote_id}", response_model=QuoteRead)
 async def update_quote(quote_id: int, payload: QuoteUpdate, session: AsyncSession = Depends(get_session)) -> Quote:
-    quote = await session.get(Quote, quote_id)
+    quote = await load_quote(session, quote_id)
     if quote is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote not found")
 
@@ -127,17 +165,88 @@ async def update_quote(quote_id: int, payload: QuoteUpdate, session: AsyncSessio
     for field_name, field_value in updates.items():
         setattr(quote, field_name, field_value)
 
+    if payload.lines is not None:
+        quote.lines = [
+            QuoteLine(line_number=index + 1, speaker=line.speaker, nickname=line.nickname, text=line.text)
+            for index, line in enumerate(payload.lines)
+        ]
+
     if quote.datetime_said is None:
         quote.datetime_said = quote.datetime_added
 
     await session.commit()
     await session.refresh(quote)
-    return quote
+    fresh_quote = await load_quote(session, quote.id)
+    if fresh_quote is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to load updated quote")
+    return fresh_quote
+
+
+@app.post("/quotes/{quote_id}/lines", response_model=QuoteRead, status_code=status.HTTP_201_CREATED)
+async def append_quote_lines(
+    quote_id: int,
+    payload: list[QuoteLineCreate],
+    session: AsyncSession = Depends(get_session),
+) -> Quote:
+    quote = await load_quote(session, quote_id)
+    if quote is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote not found")
+
+    next_line_number = (quote.lines[-1].line_number if quote.lines else 0) + 1
+    for offset, line in enumerate(payload):
+        quote.lines.append(
+            QuoteLine(
+                line_number=next_line_number + offset,
+                speaker=line.speaker,
+                nickname=line.nickname,
+                text=line.text,
+            )
+        )
+
+    await session.commit()
+    await session.refresh(quote)
+    fresh_quote = await load_quote(session, quote.id)
+    if fresh_quote is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to load updated quote")
+    return fresh_quote
+
+
+@app.patch("/quotes/{quote_id}/lines/{line_id}", response_model=QuoteLineRead)
+async def update_quote_line(
+    quote_id: int,
+    line_id: int,
+    payload: QuoteLineUpdate,
+    session: AsyncSession = Depends(get_session),
+) -> QuoteLine:
+    line = await load_line(session, quote_id, line_id)
+    if line is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote line not found")
+
+    updates = payload.model_dump(exclude_unset=True)
+    for field_name, field_value in updates.items():
+        setattr(line, field_name, field_value)
+
+    await session.commit()
+    await session.refresh(line)
+    return line
+
+
+@app.delete("/quotes/{quote_id}/lines/{line_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_quote_line(
+    quote_id: int,
+    line_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    line = await load_line(session, quote_id, line_id)
+    if line is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote line not found")
+    await session.delete(line)
+    await session.commit()
 
 
 @app.delete("/quotes/{quote_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_quote(quote_id: int, session: AsyncSession = Depends(get_session)) -> None:
-    quote = await session.get(Quote, quote_id)
+    quote = await load_quote(session, quote_id)
     if quote is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote not found")
     await session.delete(quote)
