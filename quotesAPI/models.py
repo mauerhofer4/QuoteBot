@@ -14,4 +14,8 @@ class Quote(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     text: Mapped[str] = mapped_column(Text, nullable=False)
     author: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    nickname: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    context: Mapped[str | None] = mapped_column(Text, nullable=True)
+    creator_id: Mapped[str | None] = mapped_column(String(50), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

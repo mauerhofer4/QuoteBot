@@ -57,3 +57,19 @@ export function getRandomEmoji() {
 export function capitalize(str) {
   return str.charAt(0).toUpperCase() + str.slice(1);
 }
+
+export function hasRole(member, roleId) {
+  if (!member || !member.roles) {
+    return false;
+  }
+  return member.roles.includes(roleId);
+}
+
+export function checkQuoteWriterRole(member) {
+  const quoteWriterRoleId = process.env.QUOTE_WRITER_ROLE_ID;
+  if (!quoteWriterRoleId) {
+    console.warn('QUOTE_WRITER_ROLE_ID not set in environment variables');
+    return false;
+  }
+  return hasRole(member, quoteWriterRoleId);
+}
