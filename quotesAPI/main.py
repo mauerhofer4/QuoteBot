@@ -64,7 +64,7 @@ async def get_random_quote(session: AsyncSession = Depends(get_session)) -> Quot
 
 
 @app.get("/quotes/guild/{guild_id}/random", response_model=QuoteRead)
-async def get_random_quote_by_guild(guild_id: int, session: AsyncSession = Depends(get_session)) -> Quote:
+async def get_random_quote_by_guild(guild_id: str, session: AsyncSession = Depends(get_session)) -> Quote:
     result = await session.execute(
         quote_select().where(Quote.guild_id == guild_id).order_by(Quote.id.desc())
     )
@@ -86,7 +86,7 @@ async def get_latest_quote(session: AsyncSession = Depends(get_session)) -> Quot
 
 
 @app.get("/quotes/guild/{guild_id}/latest", response_model=QuoteRead)
-async def get_latest_quote_by_guild(guild_id: int, session: AsyncSession = Depends(get_session)) -> Quote:
+async def get_latest_quote_by_guild(guild_id: str, session: AsyncSession = Depends(get_session)) -> Quote:
     result = await session.execute(
         quote_select().where(Quote.guild_id == guild_id).order_by(Quote.datetime_added.desc(), Quote.id.desc()).limit(1)
     )
@@ -117,7 +117,7 @@ async def search_quotes(query: str, session: AsyncSession = Depends(get_session)
 
 
 @app.get("/quotes/guild/{guild_id}/search", response_model=list[QuoteRead])
-async def search_quotes_by_guild(guild_id: int, query: str, session: AsyncSession = Depends(get_session)) -> list[Quote]:
+async def search_quotes_by_guild(guild_id: str, query: str, session: AsyncSession = Depends(get_session)) -> list[Quote]:
     search = f"%{query.strip()}%"
     result = await session.execute(
         quote_select().where(Quote.guild_id == guild_id)
@@ -144,7 +144,7 @@ async def get_quotes_by_author(author: str, session: AsyncSession = Depends(get_
     return list(result.scalars().all())
 
 @app.get("/quotes/guild/{guild_id}/by-author/{author}", response_model=list[QuoteRead])
-async def get_quotes_by_author_in_guild(guild_id: int, author: str, session: AsyncSession = Depends(get_session)) -> list[Quote]:
+async def get_quotes_by_author_in_guild(guild_id: str, author: str, session: AsyncSession = Depends(get_session)) -> list[Quote]:
     result = await session.execute(
         quote_select().where(Quote.guild_id == guild_id).where(Quote.author.ilike(f"%{author}%")).order_by(Quote.id.desc())
     )
@@ -160,7 +160,7 @@ async def get_quotes_by_speaker(speaker: str, session: AsyncSession = Depends(ge
 
 
 @app.get("/quotes/guild/{guild_id}/by-speaker/{speaker}", response_model=list[QuoteRead])
-async def get_quotes_by_speaker_in_guild(guild_id: int, speaker: str, session: AsyncSession = Depends(get_session)) -> list[Quote]:
+async def get_quotes_by_speaker_in_guild(guild_id: str, speaker: str, session: AsyncSession = Depends(get_session)) -> list[Quote]:
     result = await session.execute(
         quote_select().where(Quote.guild_id == guild_id).join(Quote.lines).where(QuoteLine.speaker.ilike(f"%{speaker}%")).distinct().order_by(Quote.id.desc())
     )
@@ -176,7 +176,7 @@ async def get_quotes_by_nickname(nickname: str, session: AsyncSession = Depends(
 
 
 @app.get("/quotes/guild/{guild_id}/by-nickname/{nickname}", response_model=list[QuoteRead])
-async def get_quotes_by_nickname_in_guild(guild_id: int, nickname: str, session: AsyncSession = Depends(get_session)) -> list[Quote]:
+async def get_quotes_by_nickname_in_guild(guild_id: str, nickname: str, session: AsyncSession = Depends(get_session)) -> list[Quote]:
     result = await session.execute(
         quote_select().where(Quote.guild_id == guild_id).join(Quote.lines).where(QuoteLine.nickname.ilike(f"%{nickname}%")).distinct().order_by(Quote.id.desc())
     )

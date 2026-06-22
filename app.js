@@ -2,23 +2,22 @@ import 'dotenv/config';
 import express from 'express';
 import { ActivityType, Client } from 'discord.js';
 import {
-  ButtonStyleTypes,
-  InteractionResponseFlags,
   InteractionResponseType,
   InteractionType,
-  MessageComponentTypes,
   verifyKeyMiddleware,
 } from 'discord-interactions';
-import { getRandomEmoji, DiscordRequest } from './utils.js';
-import { fetchRandomQuote } from './botApi.js';
+import { 
+  fetchGuildRandomQuote, 
+  searchGuildQuotes, 
+  listGuildQuotes, 
+  createQuote, 
+  deleteQuote 
+} from './botApi.js';
 
-// Create an express app
-const app = express();
-// Get port, or default to 3000
 const PORT = process.env.PORT || 3000;
+const STAFF_ROLE_ID = process.env.STAFF_ROLE_ID;
 const API_BASE_URL = (() => {
   const configuredUrl = process.env.API_BASE_URL || 'http://localhost:8000';
-
   try {
     const url = new URL(configuredUrl);
     if (url.hostname === 'api') {
@@ -30,127 +29,163 @@ const API_BASE_URL = (() => {
     return 'http://localhost:8000';
   }
 })();
-// To keep track of our active games
-const activeGames = {};
+
+const app = express();
 
 const client = new Client({ intents: [] });
 
 client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}`);
-  client.user.setPresence({
-    status: 'online',
-    activities: [
-      {
-        name: 'QuoteBot',
-        type: ActivityType.Playing,
-      },
-    ],
-  });
+  client.user.setPresence({ status: 'online', activities: [{ name: 'QuoteBot', type: ActivityType.Playing }] });
 });
 
-client.login(process.env.DISCORD_TOKEN).catch((error) => {
-  console.error('Failed to log in to Discord', error);
-});
+client.login(process.env.DISCORD_TOKEN).catch(console.error);
 
-/**
- * Interactions endpoint URL where Discord will send HTTP requests
- * Parse request body and verifies incoming requests using discord-interactions package
- */
+function hasStaffRole(member) {
+  if (!member?.roles || !STAFF_ROLE_ID) return false;
+  return member.roles.includes(STAFF_ROLE_ID);
+}
+
 app.post('/interactions', verifyKeyMiddleware(process.env.PUBLIC_KEY), async function (req, res) {
-  // Interaction id, type and data
-  const { id, type, data } = req.body;
+  const { type, data } = req.body;
 
-  /**
-   * Handle verification requests
-   */
   if (type === InteractionType.PING) {
     return res.send({ type: InteractionResponseType.PONG });
   }
 
-  /**
-   * Handle slash command requests
-   * See https://discord.com/developers/docs/interactions/application-commands#slash-commands
-   */
   if (type === InteractionType.APPLICATION_COMMAND) {
     const { name } = data;
+    const guildId = req.body.guild_id;
 
-    // "test" command
-    if (name === 'test') {
-      // Send a message into the channel where command was triggered from
-      return res.send({
-        type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
-        data: {
-          flags: InteractionResponseFlags.IS_COMPONENTS_V2,
-          components: [
-            {
-              type: MessageComponentTypes.TEXT_DISPLAY,
-              // Fetches a random emoji to send from a helper function
-              content: `hello world ${getRandomEmoji()}`
-            }
-          ]
-        },
-      });
-    }
-    if (name === 'test2') {
-      const option1 = data.options.find((opt) => opt.name === 'option1')?.value;
-      const option2 = data.options.find((opt) => opt.name === 'option2')?.value;
-
-      return res.send({
-        type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
-        data: {
-          flags: InteractionResponseFlags.IS_COMPONENTS_V2,
-          components: [
-            {
-              type: MessageComponentTypes.TEXT_DISPLAY,
-              content: `Option 1: ${option1}, Option 2: ${option2}`
-            }
-          ]
-        },
-      });
-    }
-
-    if (name === 'quote') {
+    // Health
+    if (name === 'healthcheck') {
       try {
-        const quote = await fetchRandomQuote(API_BASE_URL);
-        const author = quote.author ? ` - ${quote.author}` : '';
-
-        return res.send({
-          type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
-          data: {
-            flags: InteractionResponseFlags.IS_COMPONENTS_V2,
-            components: [
-              {
-                type: MessageComponentTypes.TEXT_DISPLAY,
-                content: `"${quote.text}"${author}`,
-              },
-            ],
-          },
-        });
-      } catch (error) {
-        console.error('quote command failed', error);
-        return res.send({
-          type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
-          data: {
-            flags: InteractionResponseFlags.IS_COMPONENTS_V2,
-            components: [
-              {
-                type: MessageComponentTypes.TEXT_DISPLAY,
-                content: 'Quote API is unavailable right now.',
-              },
-            ],
-          },
-        });
+        const resp = await fetch(`${API_BASE_URL}/health`);
+        return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: `API Health: ${resp.ok ? 'OK' : 'DOWN'}` } });
+      } catch {
+        return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: 'API unreachable.' } });
       }
     }
 
-    console.error(`unknown command: ${name}`);
-    return res.status(400).json({ error: 'unknown command' });
+    // Random quote
+    if (name === 'quote') {
+      try {
+        const quote = await fetchGuildRandomQuote(API_BASE_URL, guildId);
+        return res.send({ 
+          type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, 
+          data: { content: quote.quotetext } 
+        });
+      } catch {
+        return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: 'No quotes found.' } });
+      }
+    }
+
+    // Search
+    if (name === 'searchquote') {
+      const query = data.options.find(opt => opt.name === 'query')?.value;
+      try {
+        const quotes = await searchGuildQuotes(API_BASE_URL, guildId, query);
+        const content = quotes.slice(0, 5).map(q => `**${q.id}**\n${q.quotetext}`).join('\n\n') || 'No results.';
+        return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content } });
+      } catch {
+        return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: 'Search failed.' } });
+      }
+    }
+
+    // Add quote
+    if (name === 'addquote') {
+      if (!hasStaffRole(req.body.member)) {
+        return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: 'Staff only.' } });
+      }
+
+      const numLines = Math.min(data.options.find(opt => opt.name === 'lines')?.value || 1, 1);  // Discord modal limit
+      const author = req.body.member?.user?.username || 'Unknown';
+
+      const components = [
+        { type: 1, components: [{ type: 4, custom_id: 'author', label: 'Main Author', style: 1, value: author, required: true, max_length: 120 }] },
+        { type: 1, components: [{ type: 4, custom_id: 'context', label: 'Context (optional)', style: 2, required: false, max_length: 4000 }] }
+      ];
+
+      for (let i = 1; i <= numLines; i++) {
+        components.push(
+          { type: 1, components: [{ type: 4, custom_id: `speaker_${i}`, label: `Speaker ${i}`, style: 1, required: true, max_length: 120 }] },
+          { type: 1, components: [{ type: 4, custom_id: `line_${i}`, label: `Line ${i} Text`, style: 2, required: true, max_length: 4000 }] }
+        );
+      }
+
+      return res.send({
+        type: InteractionResponseType.MODAL,
+        data: { 
+          custom_id: 'quote_create_modal', 
+          title: `Create Quote (${numLines} lines)`, 
+          components 
+        }
+      });
+    }
+
+    // List
+    if (name === 'listquotes') {
+      try {
+        const quotes = await listGuildQuotes(API_BASE_URL, guildId);
+        const content = quotes.slice(0, 10).map(q => `**${q.id}**\n${q.quotetext}`).join('\n\n') || 'No quotes.';
+        return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content } });
+      } catch {
+        return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: 'Error fetching quotes.' } });
+      }
+    }
+
+    // Delete
+    if (name === 'deletequote') {
+      if (!hasStaffRole(req.body.member)) {
+        return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: 'Staff only.' } });
+      }
+      const quoteId = data.options.find(opt => opt.name === 'quote_id')?.value;
+      try {
+        await deleteQuote(API_BASE_URL, quoteId);
+        return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: 'Quote deleted.' } });
+      } catch {
+        return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: 'Delete failed.' } });
+      }
+    }
   }
 
-  console.error('unknown interaction type', type);
-  return res.status(400).json({ error: 'unknown interaction type' });
+  // === MODAL SUBMIT ===
+  if (type === InteractionType.MODAL_SUBMIT && data.custom_id === 'quote_create_modal') {
+    if (!hasStaffRole(req.body.member)) {
+      return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: 'Staff only.' } });
+    }
+
+    const author = data.components[0].components[0].value;
+    const context = data.components[1].components[0].value || null;
+
+    const lines = [];
+    for (let i = 2; i < data.components.length; i += 2) {
+      const speaker = data.components[i]?.components?.[0]?.value?.trim();
+      const text = data.components[i + 1]?.components?.[0]?.value?.trim();
+      if (speaker && text) {
+        lines.push({ speaker, text, nickname: null });
+      }
+    }
+
+    if (lines.length === 0) {
+      return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: 'At least one line required.' } });
+    }
+
+    try {
+      await createQuote(API_BASE_URL, { 
+        guild_id: req.body.guild_id, 
+        author, 
+        context, 
+        lines 
+      });
+      return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: '✅ Quote created!' } });
+    } catch (e) {
+      console.error('Create quote error:', e);
+      return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: '❌ Failed to create quote.' } });
+    }
+  }
+
+  return res.status(400).json({ error: 'unknown interaction' });
 });
 
-app.listen(PORT, () => {
-  console.log('Listening on port', PORT);
-});
+app.listen(PORT, () => console.log('Listening on port', PORT));

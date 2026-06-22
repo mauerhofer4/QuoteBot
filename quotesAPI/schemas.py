@@ -28,7 +28,7 @@ class QuoteLineRead(BaseModel):
 
 
 class QuoteCreate(BaseModel):
-    guild_id: int
+    guild_id: str
     context: str | None = Field(default=None, max_length=4000)
     author: str = Field(min_length=1, max_length=120)
     datetime_said: datetime | None = None
@@ -36,7 +36,7 @@ class QuoteCreate(BaseModel):
 
 
 class QuoteUpdate(BaseModel):
-    guild_id: int | None = Field(default=None)
+    guild_id: str | None = Field(default=None)
     context: str | None = Field(default=None, max_length=4000)
     author: str | None = Field(default=None, min_length=1, max_length=120)
     datetime_said: datetime | None = None
@@ -47,7 +47,7 @@ class QuoteRead(BaseModel):
     id: uuid.UUID
     context: str | None
     author: str
-    guild_id: int
+    guild_id: str
     datetime_added: datetime
     datetime_said: datetime | None
     lines: list[QuoteLineRead]

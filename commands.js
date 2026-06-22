@@ -1,63 +1,66 @@
 import 'dotenv/config';
-import { capitalize, InstallGlobalCommands, InstallGuildCommands } from './utils.js';
-
-// Get the game choices from game.js
-function createCommandChoices() {
-  const choices = getRPSChoices();
-  const commandChoices = [];
-
-  for (let choice of choices) {
-    commandChoices.push({
-      name: capitalize(choice),
-      value: choice.toLowerCase(),
-    });
-  }
-
-  return commandChoices;
-}
-
-// Simple test command
-const TEST_COMMAND = {
-  name: 'test',
-  description: 'Basic command',
-  type: 1,
-  integration_types: [0, 1],
-  contexts: [0, 1, 2],
-};
+import { InstallGuildCommands } from './utils.js';
 
 const QUOTE_COMMAND = {
   name: 'quote',
-  description: 'Get a random quote from the API',
+  description: 'Get a random quote from this server',
   type: 1,
-  integration_types: [0, 1],
-  contexts: [0, 1, 2],
+  integration_types: [0,1],
+  contexts: [0],
 };
 
-const ALL_COMMANDS = [TEST_COMMAND, QUOTE_COMMAND];
-// simple test 2 command with options
-const TEST2_COMMAND = {
-  name: 'test2',
-  description: 'Command with options',
+const SEARCHQUOTE_COMMAND = {
+  name: 'searchquote',
+  description: 'Search quotes in this server',
   type: 1,
-  integration_types: [0, 1],
-  contexts: [0, 1, 2],
+  integration_types: [0,1],
+  contexts: [0],
+  options: [{ name: 'query', description: 'Search term', type: 3, required: true }],
+};
+
+const ADDQUOTE_COMMAND = {
+  name: 'addquote',
+  description: 'Create quote (staff only)',
+  type: 1,
+  integration_types: [0,1],
+  contexts: [0],
   options: [
     {
-      name: 'option1',
-      description: 'First option',
-      type: 3,
+      name: 'lines',
+      description: 'Number of quote lines (currently 1)',
+      type: 4,
       required: true,
-    },
-    {
-      name: 'option2',
-      description: 'Second option',
-      type: 3,
-      required: false,
-    },
+      min_value: 1,
+      max_value: 1
+    }
   ],
 };
 
-const ALL_COMMANDS = [TEST_COMMAND, TEST2_COMMAND];
+const LISTQUOTES_COMMAND = {
+  name: 'listquotes',
+  description: 'List latest 10 server quotes',
+  type: 1,
+  integration_types: [0,1],
+  contexts: [0],
+};
 
-// InstallGlobalCommands(process.env.APP_ID, ALL_COMMANDS);
+const DELETEQUOTE_COMMAND = {
+  name: 'deletequote',
+  description: 'Delete quote by ID (staff only)',
+  type: 1,
+  integration_types: [0,1],
+  contexts: [0],
+  options: [{ name: 'quote_id', description: 'Quote UUID', type: 3, required: true }],
+};
+
+const HEALTH_COMMAND = {
+  name: 'healthcheck',
+  description: 'Check API health',
+  type: 1,
+  integration_types: [0,1],
+  contexts: [0,1,2],
+};
+
+const ALL_COMMANDS = [QUOTE_COMMAND, SEARCHQUOTE_COMMAND, ADDQUOTE_COMMAND, LISTQUOTES_COMMAND, DELETEQUOTE_COMMAND, HEALTH_COMMAND];
+
 InstallGuildCommands(process.env.APP_ID, process.env.GUILD_ID, ALL_COMMANDS);
