@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from collections.abc import AsyncGenerator
 import uuid
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, status, Query
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -51,6 +51,24 @@ async def health() -> dict[str, str]:
 @app.get("/quotes", response_model=list[QuoteRead])
 async def list_quotes(session: AsyncSession = Depends(get_session)) -> list[Quote]:
     result = await session.execute(quote_select().order_by(Quote.id.desc()))
+    return list(result.scalars().all())
+
+
+@app.get("/quotes/guild/{guild_id}", response_model=list[QuoteRead])
+async def list_guild_quotes(
+    guild_id: str,
+    page: int = Query(1, ge=1),
+    per_page: int = Query(10, ge=1, le=50),
+    session: AsyncSession = Depends(get_session)
+) -> list[Quote]:
+    offset = (page - 1) * per_page
+    result = await session.execute(
+        quote_select()
+        .where(Quote.guild_id == guild_id)
+        .order_by(Quote.id.desc())
+        .offset(offset)
+        .limit(per_page)
+    )
     return list(result.scalars().all())
 
 
@@ -107,6 +125,7 @@ async def search_quotes(query: str, session: AsyncSession = Depends(get_session)
                 Quote.context.ilike(search),
                 Quote.author.ilike(search),
                 QuoteLine.speaker.ilike(search),
+                QuoteLine.nickname.ilike(search),
                 QuoteLine.text.ilike(search),
             )
         )
@@ -127,6 +146,7 @@ async def search_quotes_by_guild(guild_id: str, query: str, session: AsyncSessio
                 Quote.context.ilike(search),
                 Quote.author.ilike(search),
                 QuoteLine.speaker.ilike(search),
+                QuoteLine.nickname.ilike(search),
                 QuoteLine.text.ilike(search),
             )
         )
@@ -229,14 +249,31 @@ async def update_quote(quote_id: uuid.UUID, payload: QuoteUpdate, session: Async
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote not found")
 
     updates = payload.model_dump(exclude_unset=True)
-    for field_name, field_value in updates.items():
-        setattr(quote, field_name, field_value)
 
-    if payload.lines is not None:
-        quote.lines = [
-            QuoteLine(line_number=index + 1, speaker=line.speaker, nickname=line.nickname, text=line.text)
-            for index, line in enumerate(payload.lines)
-        ]
+    for field_name, field_value in updates.items():
+        if field_name == "lines" and field_value is not None:
+            # Explicitly delete ALL existing lines first
+            for line in list(quote.lines):
+                await session.delete(line)
+
+            # Flush deletes to the DB *before* inserting new rows — without this,
+            # SQLAlchemy may emit the INSERTs before the DELETEs, causing the
+            # uq_quote_line_number unique-constraint violation.
+            await session.flush()
+
+            # Create and assign new lines
+            new_lines = [
+                QuoteLine(
+                    line_number=index + 1,
+                    speaker=line["speaker"],
+                    nickname=line.get("nickname"),
+                    text=line["text"]
+                )
+                for index, line in enumerate(field_value)
+            ]
+            quote.lines = new_lines
+        else:
+            setattr(quote, field_name, field_value)
 
     if quote.datetime_said is None:
         quote.datetime_said = quote.datetime_added

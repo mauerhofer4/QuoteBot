@@ -1,7 +1,6 @@
 export async function createQuote(apiBaseUrl, payload) {
-  const guildId = payload.guild_id || payload.guildId || '0';
   const safePayload = {
-    guild_id: guildId,
+    guild_id: String(payload.guild_id || payload.guildId || '0'),
     author: payload.author,
     context: payload.context,
     lines: payload.lines || [],
@@ -15,8 +14,20 @@ export async function createQuote(apiBaseUrl, payload) {
   return response.json();
 }
 
-export async function listGuildQuotes(apiBaseUrl, guildId) {
-  const response = await fetch(`${apiBaseUrl}/quotes/guild/${guildId}/latest`);
+export async function getQuote(apiBaseUrl, quoteId) {
+  const response = await fetch(`${apiBaseUrl}/quotes/${quoteId}`);
+  if (!response.ok) throw new Error(await response.text());
+  return response.json();
+}
+
+export async function listGuildQuotes(apiBaseUrl, guildId, page = 1) {
+  const response = await fetch(`${apiBaseUrl}/quotes/guild/${guildId}?page=${page}&per_page=5`);
+  if (!response.ok) throw new Error(await response.text());
+  return response.json();
+}
+
+export async function getLatestQuotes(apiBaseUrl, guildId) {
+  const response = await fetch(`${apiBaseUrl}/quotes/guild/${guildId}?page=1&per_page=5`);
   if (!response.ok) throw new Error(await response.text());
   return response.json();
 }
@@ -35,6 +46,16 @@ export async function fetchGuildRandomQuote(apiBaseUrl, guildId) {
 
 export async function searchGuildQuotes(apiBaseUrl, guildId, query) {
   const response = await fetch(`${apiBaseUrl}/quotes/guild/${guildId}/search?query=${encodeURIComponent(query)}`);
+  if (!response.ok) throw new Error(await response.text());
+  return response.json();
+}
+
+export async function editQuote(apiBaseUrl, quoteId, payload) {
+  const response = await fetch(`${apiBaseUrl}/quotes/${quoteId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
   if (!response.ok) throw new Error(await response.text());
   return response.json();
 }
