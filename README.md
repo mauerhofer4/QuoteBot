@@ -32,5 +32,11 @@ The API will be available on port `8000` for direct testing.
 
 The bot currently registers:
 
-- `test` for a basic response
-- `quote` for a random quote fetched from the API
+- `/quote` — get a random quote from this server
+- `/searchquote <query>` — search quotes in this server
+- `/addquote` — create a multi-line quote via modal (staff only)
+- `/editquote <quote_id>` — edit a quote by ID via modal (staff only)
+- `/deletequote <quote_id>` — delete a quote by ID (staff only)
+- `/latestquotes` — show the latest 5 quotes from this server
+- `/listquotes [page]` — list quotes from this server, paginated at 5 per page
+- `/ping` — check if the bot and API are responsive
