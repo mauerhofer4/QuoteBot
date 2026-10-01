@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { InstallGuildCommands } from './utils.js';
+import { InstallGlobalCommands, InstallGuildCommands } from './utils.js';
 
 const QUOTE_COMMAND = {
   name: 'quote',
@@ -69,6 +69,51 @@ const PING_COMMAND = {
   contexts: [0,1,2],
 };
 
-const ALL_COMMANDS = [QUOTE_COMMAND, SEARCHQUOTE_COMMAND, ADDQUOTE_COMMAND, LATESTQUOTES_COMMAND, LISTQUOTES_COMMAND, EDITQUOTE_COMMAND, DELETEQUOTE_COMMAND, PING_COMMAND];
+const QUOTECOUNT_COMMAND = {
+  name: 'quotecount',
+  description: 'Show how many quotes this server has',
+  type: 1,
+  integration_types: [0,1],
+  contexts: [0],
+};
 
-InstallGuildCommands(process.env.APP_ID, process.env.GUILD_ID, ALL_COMMANDS);
+const SCHEDULEQUOTE_COMMAND = {
+  name: 'schedulequote',
+  description: 'Post a random quote on a schedule',
+  type: 1,
+  integration_types: [0,1],
+  contexts: [0],
+  options: [
+    {
+      name: 'set',
+      description: 'Post a random quote to a channel at a fixed interval (staff only)',
+      type: 1,
+      options: [
+        { name: 'channel', description: 'Channel to post in', type: 7, required: true, channel_types: [0, 5] },
+        { name: 'every', description: 'Interval amount, e.g. 24', type: 4, required: true, min_value: 1 },
+        {
+          name: 'unit',
+          description: 'Interval unit (default: hours)',
+          type: 3,
+          choices: [
+            { name: 'minutes', value: 'minutes' },
+            { name: 'hours', value: 'hours' },
+            { name: 'days', value: 'days' },
+          ],
+        },
+      ],
+    },
+    { name: 'stop', description: 'Stop posting scheduled quotes (staff only)', type: 1 },
+    { name: 'status', description: 'Show the current quote schedule', type: 1 },
+  ],
+};
+
+const ALL_COMMANDS = [QUOTE_COMMAND, SEARCHQUOTE_COMMAND, ADDQUOTE_COMMAND, LATESTQUOTES_COMMAND, LISTQUOTES_COMMAND, EDITQUOTE_COMMAND, DELETEQUOTE_COMMAND, QUOTECOUNT_COMMAND, SCHEDULEQUOTE_COMMAND, PING_COMMAND];
+
+// With GUILD_ID set, commands are registered for that one server (handy for testing).
+// Without it, they are registered globally for every server the bot is in.
+if (process.env.GUILD_ID) {
+  InstallGuildCommands(process.env.APP_ID, process.env.GUILD_ID, ALL_COMMANDS);
+} else {
+  InstallGlobalCommands(process.env.APP_ID, ALL_COMMANDS);
+}

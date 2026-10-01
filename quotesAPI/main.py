@@ -1,19 +1,35 @@
 import random
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from collections.abc import AsyncGenerator
 import uuid
 
-from fastapi import Depends, FastAPI, HTTPException, status, Query
-from sqlalchemy import or_, select
+from fastapi import Depends, FastAPI, File, HTTPException, status, Query, UploadFile
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
+from pydantic import TypeAdapter, ValidationError
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from database import async_session, engine
-from models import Base, Quote, QuoteLine
-from schemas import QuoteCreate, QuoteLineCreate, QuoteLineRead, QuoteLineUpdate, QuoteRead, QuoteUpdate
+from models import Base, Quote, QuoteLine, QuoteSchedule
+from schemas import (
+    QuoteCount,
+    QuoteCreate,
+    QuoteExport,
+    QuoteImport,
+    QuoteImportResult,
+    QuoteLineCreate,
+    QuoteLineRead,
+    QuoteLineUpdate,
+    QuoteRead,
+    QuoteUpdate,
+    ScheduleRead,
+    ScheduleSet,
+)
 
 
-app = FastAPI(title="QuoteBot API", version="0.2")
+app = FastAPI(title="QuoteBot API", version="0.3")
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
@@ -50,8 +66,69 @@ async def health() -> dict[str, str]:
 
 @app.get("/quotes", response_model=list[QuoteRead])
 async def list_quotes(session: AsyncSession = Depends(get_session)) -> list[Quote]:
-    result = await session.execute(quote_select().order_by(Quote.id.desc()))
+    result = await session.execute(quote_select().order_by(Quote.datetime_added.desc(), Quote.id.desc()))
     return list(result.scalars().all())
+
+
+# Export/import must be declared before /quotes/{quote_id}, otherwise "export" is parsed as a UUID.
+@app.get("/quotes/export", response_model=list[QuoteExport])
+async def export_quotes(
+    guild_id: str | None = Query(None, description="Only export quotes from this guild"),
+    session: AsyncSession = Depends(get_session),
+) -> JSONResponse:
+    query = quote_select().order_by(Quote.datetime_added.asc(), Quote.id.asc())
+    if guild_id is not None:
+        query = query.where(Quote.guild_id == guild_id)
+    result = await session.execute(query)
+    quotes = TypeAdapter(list[QuoteExport]).validate_python(list(result.scalars().all()))
+
+    filename = f"quotes-{guild_id or 'all'}-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}.json"
+    return JSONResponse(
+        content=jsonable_encoder(quotes),
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.post("/quotes/import", response_model=QuoteImportResult, status_code=status.HTTP_201_CREATED)
+async def import_quotes(
+    file: UploadFile = File(..., description="JSON file in the format produced by GET /quotes/export"),
+    guild_id: str | None = Query(None, description="Import all quotes into this guild, overriding guild_id in the file"),
+    session: AsyncSession = Depends(get_session),
+) -> QuoteImportResult:
+    try:
+        items = TypeAdapter(list[QuoteImport]).validate_json(await file.read())
+    except ValidationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=jsonable_encoder(error.errors(include_url=False, include_context=False)),
+        )
+
+    now = datetime.now(timezone.utc)
+    quotes = []
+    for index, item in enumerate(items):
+        target_guild = guild_id or item.guild_id
+        if not target_guild:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Quote at index {index} has no guild_id and no guild_id override was given",
+            )
+        added = item.datetime_added or now
+        quote = Quote(
+            guild_id=target_guild,
+            context=item.context,
+            author=item.author,
+            datetime_added=added,
+            datetime_said=item.datetime_said or added,
+        )
+        quote.lines = [
+            QuoteLine(line_number=line_index + 1, speaker=line.speaker, nickname=line.nickname, text=line.text)
+            for line_index, line in enumerate(item.lines)
+        ]
+        quotes.append(quote)
+
+    session.add_all(quotes)
+    await session.commit()
+    return QuoteImportResult(imported=len(quotes))
 
 
 @app.get("/quotes/guild/{guild_id}", response_model=list[QuoteRead])
@@ -65,11 +142,17 @@ async def list_guild_quotes(
     result = await session.execute(
         quote_select()
         .where(Quote.guild_id == guild_id)
-        .order_by(Quote.id.desc())
+        .order_by(Quote.datetime_added.desc(), Quote.id.desc())
         .offset(offset)
         .limit(per_page)
     )
     return list(result.scalars().all())
+
+
+@app.get("/quotes/guild/{guild_id}/count", response_model=QuoteCount)
+async def count_guild_quotes(guild_id: str, session: AsyncSession = Depends(get_session)) -> QuoteCount:
+    result = await session.execute(select(func.count()).select_from(Quote).where(Quote.guild_id == guild_id))
+    return QuoteCount(guild_id=guild_id, count=result.scalar_one())
 
 
 @app.get("/quotes/random", response_model=QuoteRead)
@@ -354,4 +437,67 @@ async def delete_quote(quote_id: uuid.UUID, session: AsyncSession = Depends(get_
     if quote is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Quote not found")
     await session.delete(quote)
+    await session.commit()
+
+@app.get("/schedules", response_model=list[ScheduleRead])
+async def list_schedules(session: AsyncSession = Depends(get_session)) -> list[QuoteSchedule]:
+    result = await session.execute(select(QuoteSchedule).order_by(QuoteSchedule.created_at))
+    return list(result.scalars().all())
+
+
+# Declared before /schedules/{guild_id}, otherwise "due" is treated as a guild id.
+@app.get("/schedules/due", response_model=list[ScheduleRead])
+async def list_due_schedules(session: AsyncSession = Depends(get_session)) -> list[QuoteSchedule]:
+    now = datetime.now(timezone.utc)
+    result = await session.execute(select(QuoteSchedule))
+    due = []
+    for schedule in result.scalars().all():
+        last_sent = schedule.last_sent_at
+        if last_sent is not None and last_sent.tzinfo is None:
+            last_sent = last_sent.replace(tzinfo=timezone.utc)
+        if last_sent is None or now - last_sent >= timedelta(minutes=schedule.interval_minutes):
+            due.append(schedule)
+    return due
+
+
+@app.get("/schedules/{guild_id}", response_model=ScheduleRead)
+async def get_schedule(guild_id: str, session: AsyncSession = Depends(get_session)) -> QuoteSchedule:
+    schedule = await session.get(QuoteSchedule, guild_id)
+    if schedule is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No schedule for this guild")
+    return schedule
+
+
+@app.put("/schedules/{guild_id}", response_model=ScheduleRead)
+async def set_schedule(guild_id: str, payload: ScheduleSet, session: AsyncSession = Depends(get_session)) -> QuoteSchedule:
+    schedule = await session.get(QuoteSchedule, guild_id)
+    if schedule is None:
+        schedule = QuoteSchedule(guild_id=guild_id)
+        session.add(schedule)
+    schedule.channel_id = payload.channel_id
+    schedule.interval_minutes = payload.interval_minutes
+    # Start counting from now, so the first quote is posted one interval after setting the schedule.
+    schedule.last_sent_at = datetime.now(timezone.utc)
+    await session.commit()
+    await session.refresh(schedule)
+    return schedule
+
+
+@app.post("/schedules/{guild_id}/sent", response_model=ScheduleRead)
+async def mark_schedule_sent(guild_id: str, session: AsyncSession = Depends(get_session)) -> QuoteSchedule:
+    schedule = await session.get(QuoteSchedule, guild_id)
+    if schedule is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No schedule for this guild")
+    schedule.last_sent_at = datetime.now(timezone.utc)
+    await session.commit()
+    await session.refresh(schedule)
+    return schedule
+
+
+@app.delete("/schedules/{guild_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_schedule(guild_id: str, session: AsyncSession = Depends(get_session)) -> None:
+    schedule = await session.get(QuoteSchedule, guild_id)
+    if schedule is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No schedule for this guild")
+    await session.delete(schedule)
     await session.commit()

@@ -72,3 +72,54 @@ class QuoteRead(BaseModel):
     @property
     def created_at(self) -> datetime:
         return self.datetime_added
+
+class QuoteCount(BaseModel):
+    guild_id: str
+    count: int
+
+
+class QuoteLineExport(BaseModel):
+    speaker: str
+    nickname: str | None
+    text: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class QuoteExport(BaseModel):
+    guild_id: str
+    context: str | None
+    author: str
+    datetime_added: datetime
+    datetime_said: datetime | None
+    lines: list[QuoteLineExport]
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class QuoteImport(BaseModel):
+    guild_id: str | None = None
+    context: str | None = Field(default=None, max_length=4000)
+    author: str = Field(min_length=1, max_length=120)
+    datetime_added: datetime | None = None
+    datetime_said: datetime | None = None
+    lines: list[QuoteLineCreate] = Field(min_length=1)
+
+
+class QuoteImportResult(BaseModel):
+    imported: int
+
+
+class ScheduleSet(BaseModel):
+    channel_id: str = Field(min_length=1, max_length=20)
+    interval_minutes: int = Field(ge=1, le=43200)
+
+
+class ScheduleRead(BaseModel):
+    guild_id: str
+    channel_id: str
+    interval_minutes: int
+    last_sent_at: datetime | None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)

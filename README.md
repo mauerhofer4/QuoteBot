@@ -18,6 +18,14 @@ The API currently exposes:
 - `GET /quotes/random`
 - `POST /quotes`
 - `DELETE /quotes/{quote_id}`
+- `GET /quotes/guild/{guild_id}` — paginated, newest first (by `datetime_added`)
+- `GET /quotes/guild/{guild_id}/count` — number of quotes in a guild
+- `GET /quotes/export[?guild_id=]` — download all quotes (or one guild's) as a JSON file
+- `POST /quotes/import[?guild_id=]` — upload a JSON file from `/quotes/export`; `guild_id` overrides the guild of every imported quote
+- `GET /schedules`, `GET /schedules/due`
+- `GET|PUT|DELETE /schedules/{guild_id}`, `POST /schedules/{guild_id}/sent`
+
+Import and export are meant for the Swagger UI at `http://localhost:8000/docs`. Importing the same file twice creates duplicates.
 
 ## Local setup
 
@@ -39,4 +47,12 @@ The bot currently registers:
 - `/deletequote <quote_id>` — delete a quote by ID (staff only)
 - `/latestquotes` — show the latest 5 quotes from this server
 - `/listquotes [page]` — list quotes from this server, paginated at 5 per page
+- `/quotecount` — show how many quotes this server has
+- `/schedulequote set <channel> <every> [unit]` — post a random quote to a channel every N minutes/hours/days (staff only, max 30 days)
+- `/schedulequote stop` — stop scheduled quotes (staff only)
+- `/schedulequote status` — show the current schedule and when the next quote is posted
 - `/ping` — check if the bot and API are responsive
+
+
+### TODO:
+- display?

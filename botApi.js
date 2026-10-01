@@ -59,3 +59,45 @@ export async function editQuote(apiBaseUrl, quoteId, payload) {
   if (!response.ok) throw new Error(await response.text());
   return response.json();
 }
+export async function getGuildQuoteCount(apiBaseUrl, guildId) {
+  const response = await fetch(`${apiBaseUrl}/quotes/guild/${guildId}/count`);
+  if (!response.ok) throw new Error(await response.text());
+  const { count } = await response.json();
+  return count;
+}
+
+export async function getSchedule(apiBaseUrl, guildId) {
+  const response = await fetch(`${apiBaseUrl}/schedules/${guildId}`);
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(await response.text());
+  return response.json();
+}
+
+export async function setSchedule(apiBaseUrl, guildId, channelId, intervalMinutes) {
+  const response = await fetch(`${apiBaseUrl}/schedules/${guildId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ channel_id: String(channelId), interval_minutes: intervalMinutes }),
+  });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json();
+}
+
+export async function deleteSchedule(apiBaseUrl, guildId) {
+  const response = await fetch(`${apiBaseUrl}/schedules/${guildId}`, { method: 'DELETE' });
+  if (response.status === 404) return false;
+  if (!response.ok) throw new Error(await response.text());
+  return true;
+}
+
+export async function getDueSchedules(apiBaseUrl) {
+  const response = await fetch(`${apiBaseUrl}/schedules/due`);
+  if (!response.ok) throw new Error(await response.text());
+  return response.json();
+}
+
+export async function markScheduleSent(apiBaseUrl, guildId) {
+  const response = await fetch(`${apiBaseUrl}/schedules/${guildId}/sent`, { method: 'POST' });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json();
+}

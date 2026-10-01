@@ -37,3 +37,12 @@ class QuoteLine(Base):
     text: Mapped[str] = mapped_column(Text, nullable=False)
 
     quote: Mapped[Quote] = relationship(back_populates="lines")
+
+class QuoteSchedule(Base):
+    __tablename__ = "quote_schedules"
+
+    guild_id: Mapped[str] = mapped_column(String(20), primary_key=True)
+    channel_id: Mapped[str] = mapped_column(String(20), nullable=False)
+    interval_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    last_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)

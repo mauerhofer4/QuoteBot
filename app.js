@@ -15,6 +15,12 @@ import {
   getLatestQuotes,
   getQuote,
   editQuote,
+  getGuildQuoteCount,
+  getSchedule,
+  setSchedule,
+  deleteSchedule,
+  getDueSchedules,
+  markScheduleSent,
 } from './botApi.js';
 
 const PORT = process.env.PORT || 3000;
@@ -43,6 +49,51 @@ client.once('ready', () => {
 });
 
 client.login(process.env.DISCORD_TOKEN).catch(console.error);
+
+const SCHEDULE_CHECK_MS = 60 * 1000;
+const UNIT_MINUTES = { minutes: 1, hours: 60, days: 1440 };
+const MAX_INTERVAL_MINUTES = 43200; // 30 days, matches the API limit
+
+function formatQuote(quote) {
+  return quote.context ? `**Context:** ${quote.context}\n\n${quote.quotetext}` : quote.quotetext;
+}
+
+function formatInterval(minutes) {
+  if (minutes % 1440 === 0) return `${minutes / 1440} day${minutes === 1440 ? '' : 's'}`;
+  if (minutes % 60 === 0) return `${minutes / 60} hour${minutes === 60 ? '' : 's'}`;
+  return `${minutes} minute${minutes === 1 ? '' : 's'}`;
+}
+
+/**
+ * Every minute, ask the API which schedules are due and post a random quote for each.
+ * Schedules live in the database, so they survive bot restarts. A schedule is marked as
+ * sent even when posting fails (missing permissions, deleted channel, no quotes), so a
+ * broken schedule doesn't retry every minute.
+ */
+let scheduleCheckRunning = false;
+async function postDueScheduledQuotes() {
+  if (scheduleCheckRunning || !client.isReady()) return;
+  scheduleCheckRunning = true;
+  try {
+    const schedules = await getDueSchedules(API_BASE_URL);
+    for (const schedule of schedules) {
+      try {
+        const quote = await fetchGuildRandomQuote(API_BASE_URL, schedule.guild_id);
+        const channel = await client.channels.fetch(schedule.channel_id);
+        await channel.send({ content: formatQuote(quote), allowedMentions: { parse: [] } });
+      } catch (e) {
+        console.error(`Scheduled quote for guild ${schedule.guild_id} failed:`, e.message);
+      }
+      await markScheduleSent(API_BASE_URL, schedule.guild_id);
+    }
+  } catch (e) {
+    console.error('Schedule check failed:', e.message);
+  } finally {
+    scheduleCheckRunning = false;
+  }
+}
+
+setInterval(postDueScheduledQuotes, SCHEDULE_CHECK_MS);
 
 function hasStaffRole(member) {
   if (!member?.roles || !STAFF_ROLE_IDS.length) return false;
@@ -160,9 +211,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.PUBLIC_KEY), async fun
     if (name === 'quote') {
       try {
         const quote = await fetchGuildRandomQuote(API_BASE_URL, guildId);
-        let content = quote.quotetext;
-        if (quote.context) content = `**Context:** ${quote.context}\n\n${content}`;
-        return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content } });
+        return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: formatQuote(quote) } });
       } catch {
         return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: 'No quotes found.' } });
       }
@@ -226,6 +275,55 @@ app.post('/interactions', verifyKeyMiddleware(process.env.PUBLIC_KEY), async fun
         return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: `Page ${page}\n\n${content}` } });
       } catch {
         return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: 'Error fetching quotes.' } });
+      }
+    }
+
+    // Quote count
+    if (name === 'quotecount') {
+      try {
+        const count = await getGuildQuoteCount(API_BASE_URL, guildId);
+        return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: `📚 This server has **${count}** quote${count === 1 ? '' : 's'}.` } });
+      } catch {
+        return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: 'Error fetching quote count.' } });
+      }
+    }
+
+    // Scheduled quotes
+    if (name === 'schedulequote') {
+      const subcommand = data.options?.[0];
+      const reply = content => res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content } });
+
+      if (subcommand?.name !== 'status' && !hasStaffRole(req.body.member)) {
+        return reply('Staff only.');
+      }
+
+      try {
+        if (subcommand?.name === 'set') {
+          const channelId = subcommand.options.find(opt => opt.name === 'channel')?.value;
+          const every = subcommand.options.find(opt => opt.name === 'every')?.value;
+          const unit = subcommand.options.find(opt => opt.name === 'unit')?.value || 'hours';
+          const intervalMinutes = every * UNIT_MINUTES[unit];
+          if (intervalMinutes > MAX_INTERVAL_MINUTES) {
+            return reply('❌ The interval can be at most 30 days.');
+          }
+          await setSchedule(API_BASE_URL, guildId, channelId, intervalMinutes);
+          return reply(`✅ A random quote will be posted in <#${channelId}> every ${formatInterval(intervalMinutes)}.`);
+        }
+
+        if (subcommand?.name === 'stop') {
+          const deleted = await deleteSchedule(API_BASE_URL, guildId);
+          return reply(deleted ? '🛑 Scheduled quotes stopped.' : 'There is no quote schedule for this server.');
+        }
+
+        if (subcommand?.name === 'status') {
+          const schedule = await getSchedule(API_BASE_URL, guildId);
+          if (!schedule) return reply('There is no quote schedule for this server.');
+          const nextAt = Math.floor((new Date(schedule.last_sent_at).getTime() + schedule.interval_minutes * 60000) / 1000);
+          return reply(`⏰ Posting a random quote in <#${schedule.channel_id}> every ${formatInterval(schedule.interval_minutes)}.\nNext quote <t:${nextAt}:R>.`);
+        }
+      } catch (e) {
+        console.error('Schedule error:', e);
+        return reply('❌ Failed to update the quote schedule.');
       }
     }
 
