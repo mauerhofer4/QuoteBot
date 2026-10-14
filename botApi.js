@@ -26,11 +26,6 @@ export async function listGuildQuotes(apiBaseUrl, guildId, page = 1) {
   return response.json();
 }
 
-export async function getLatestQuotes(apiBaseUrl, guildId) {
-  const response = await fetch(`${apiBaseUrl}/quotes/guild/${guildId}?page=1&per_page=5`);
-  if (!response.ok) throw new Error(await response.text());
-  return response.json();
-}
 
 export async function deleteQuote(apiBaseUrl, quoteId) {
   const response = await fetch(`${apiBaseUrl}/quotes/${quoteId}`, { method: 'DELETE' });

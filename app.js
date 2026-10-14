@@ -13,7 +13,6 @@ import {
   listGuildQuotes,
   createQuote,
   deleteQuote,
-  getLatestQuotes,
   getQuote,
   editQuote,
   getGuildQuoteCount,
@@ -57,6 +56,85 @@ const MAX_INTERVAL_MINUTES = 43200; // 30 days, matches the API limit
 
 function formatQuote(quote) {
   return quote.context ? `**Context:** ${quote.context}\n\n${quote.quotetext}` : quote.quotetext;
+}
+
+const QUOTES_PER_PAGE = 5;
+// The search query is stored in the button custom_id, which Discord caps at 100 characters.
+const MAX_SEARCH_QUERY_LENGTH = 80;
+// Discord caps the combined text of all embeds in a message at 6000 characters.
+const MAX_QUOTE_PREVIEW_LENGTH = 1000;
+
+function truncate(text, maxLength) {
+  return text.length > maxLength ? `${text.slice(0, maxLength - 3)}...` : text;
+}
+
+function quoteEmbed(quote) {
+  return { description: `${truncate(formatQuote(quote), MAX_QUOTE_PREVIEW_LENGTH)}\n\n**ID:** \`${quote.id}\`` };
+}
+
+/**
+ * Button row for paginated quote messages. The custom_id carries everything needed
+ * to render the target page (pg:<kind>:<button>:<page>[:<query>]), so clicks keep
+ * working after a bot restart. The button name keeps custom_ids unique per message.
+ */
+function paginationRow(kind, page, totalPages, query) {
+  const suffix = kind === 'search' ? `:${query}` : '';
+  const button = (name, label, targetPage, disabled) => ({
+    type: 2,
+    style: 2,
+    label,
+    custom_id: `pg:${kind}:${name}:${targetPage}${suffix}`,
+    disabled,
+  });
+  return {
+    type: 1,
+    components: [
+      button('first', 'First', 1, page <= 1),
+      button('prev', 'Previous', page - 1, page <= 1),
+      button('page', `Page ${page} of ${totalPages}`, page, true),
+      button('next', 'Next', page + 1, page >= totalPages),
+      button('last', 'Last', totalPages, page >= totalPages),
+    ],
+  };
+}
+
+/**
+ * Build the message for one page of quotes. kind is 'list', 'latest' or 'search'.
+ * Out-of-range pages are clamped, so stale buttons still land on a valid page
+ * after quotes were deleted.
+ */
+async function buildQuotePage(kind, guildId, requestedPage, query) {
+  let total;
+  let page;
+  let quotes;
+
+  if (kind === 'search') {
+    const results = await searchGuildQuotes(API_BASE_URL, guildId, query);
+    total = results.length;
+    page = Math.min(Math.max(requestedPage, 1), Math.max(Math.ceil(total / QUOTES_PER_PAGE), 1));
+    quotes = results.slice((page - 1) * QUOTES_PER_PAGE, page * QUOTES_PER_PAGE);
+  } else {
+    total = await getGuildQuoteCount(API_BASE_URL, guildId);
+    page = Math.min(Math.max(requestedPage, 1), Math.max(Math.ceil(total / QUOTES_PER_PAGE), 1));
+    quotes = total ? await listGuildQuotes(API_BASE_URL, guildId, page) : [];
+  }
+
+  if (!quotes.length) {
+    return { content: kind === 'search' ? 'No results.' : 'No quotes.', embeds: [], components: [], allowed_mentions: { parse: [] } };
+  }
+
+  const totalPages = Math.max(Math.ceil(total / QUOTES_PER_PAGE), 1);
+  const headers = {
+    search: `Search results for "${query}" (${total})`,
+    latest: `Latest quotes (${total} total)`,
+    list: `All quotes (${total} total)`,
+  };
+  return {
+    content: headers[kind],
+    embeds: quotes.map(quoteEmbed),
+    components: totalPages > 1 ? [paginationRow(kind, page, totalPages, query)] : [],
+    allowed_mentions: { parse: [] },
+  };
 }
 
 function formatInterval(minutes) {
@@ -230,12 +308,11 @@ app.post('/interactions', verifyKeyMiddleware(process.env.PUBLIC_KEY), async fun
     // Search
     if (name === 'searchquote') {
       const query = data.options.find(opt => opt.name === 'query')?.value;
+      if (query.length > MAX_SEARCH_QUERY_LENGTH) {
+        return sendError(res, `The search term can be at most ${MAX_SEARCH_QUERY_LENGTH} characters.`);
+      }
       try {
-        const quotes = await searchGuildQuotes(API_BASE_URL, guildId, query);
-        const content = quotes.slice(0, 5).map(q =>
-          `**ID:** \`${q.id}\`\n**Context:** ${q.context || 'None'}\n${q.quotetext}`
-        ).join('\n\n') || 'No results.';
-        return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content } });
+        return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: await buildQuotePage('search', guildId, 1, query) });
       } catch {
         return sendError(res, 'Search failed.');
       }
@@ -261,14 +338,10 @@ app.post('/interactions', verifyKeyMiddleware(process.env.PUBLIC_KEY), async fun
       });
     }
 
-    // Latest quotes
+    // Latest quotes (paginated, starting at the newest)
     if (name === 'latestquotes') {
       try {
-        const quotes = await getLatestQuotes(API_BASE_URL, guildId);
-        const content = quotes.map(q =>
-          `**ID:** \`${q.id}\`\n**Context:** ${q.context || 'None'}\n${q.quotetext}`
-        ).join('\n\n') || 'No quotes.';
-        return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content } });
+        return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: await buildQuotePage('latest', guildId, 1) });
       } catch {
         return sendError(res, 'Error fetching quotes.');
       }
@@ -278,11 +351,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.PUBLIC_KEY), async fun
     if (name === 'listquotes') {
       const page = data.options?.find(opt => opt.name === 'page')?.value || 1;
       try {
-        const quotes = await listGuildQuotes(API_BASE_URL, guildId, page);
-        const content = quotes.map(q =>
-          `**ID:** \`${q.id}\`\n**Context:** ${q.context || 'None'}\n${q.quotetext}`
-        ).join('\n\n') || 'No quotes.';
-        return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: `Page ${page}\n\n${content}` } });
+        return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: await buildQuotePage('list', guildId, page) });
       } catch {
         return sendError(res, 'Error fetching quotes.');
       }
@@ -390,6 +459,22 @@ app.post('/interactions', verifyKeyMiddleware(process.env.PUBLIC_KEY), async fun
       } catch {
         return sendError(res, 'Delete failed or not found.');
       }
+    }
+  }
+
+  // ── Pagination buttons ────────────────────────────────────────────────────
+  if (type === InteractionType.MESSAGE_COMPONENT && data.custom_id.startsWith('pg:')) {
+    // custom_id: pg:<kind>:<button>:<page>[:<query>] (the query itself may contain colons)
+    const [, kind, , pageValue, ...queryParts] = data.custom_id.split(':');
+    const query = kind === 'search' ? queryParts.join(':') : undefined;
+    try {
+      return res.send({
+        type: InteractionResponseType.UPDATE_MESSAGE,
+        data: await buildQuotePage(kind, guildId, parseInt(pageValue, 10) || 1, query),
+      });
+    } catch (e) {
+      console.error('Pagination error:', e);
+      return sendError(res, 'Error fetching quotes.');
     }
   }
 

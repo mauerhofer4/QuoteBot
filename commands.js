@@ -15,7 +15,7 @@ const SEARCHQUOTE_COMMAND = {
   type: 1,
   integration_types: [0,1],
   contexts: [0],
-  options: [{ name: 'query', description: 'Search term', type: 3, required: true }],
+  options: [{ name: 'query', description: 'Search term', type: 3, required: true, max_length: 80 }],
 };
 
 const ADDQUOTE_COMMAND = {
@@ -28,7 +28,7 @@ const ADDQUOTE_COMMAND = {
 
 const LATESTQUOTES_COMMAND = {
   name: 'latestquotes',
-  description: 'Show latest 5 quotes from this server',
+  description: 'Show the latest quotes from this server (paginated)',
   type: 1,
   integration_types: [0,1],
   contexts: [0],

@@ -41,11 +41,11 @@ The API will be available on port `8000` for direct testing.
 The bot currently registers:
 
 - `/quote` — get a random quote from this server
-- `/searchquote <query>` — search quotes in this server
+- `/searchquote <query>` — search quotes in this server, paginated at 5 per page
 - `/addquote` — create a multi-line quote via modal (staff only)
 - `/editquote <quote_id>` — edit a quote by ID via modal (staff only)
 - `/deletequote <quote_id>` — delete a quote by ID (staff only)
-- `/latestquotes` — show the latest 5 quotes from this server
+- `/latestquotes` — show the latest quotes from this server, paginated at 5 per page
 - `/listquotes [page]` — list quotes from this server, paginated at 5 per page
 - `/quotecount` — show how many quotes this server has
 - `/schedulequote set <channel> <every> [unit]` — post a random quote to a channel every N minutes/hours/days (staff only, max 30 days)
