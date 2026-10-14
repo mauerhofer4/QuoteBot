@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import { ActivityType, Client } from 'discord.js';
 import {
+  InteractionResponseFlags,
   InteractionResponseType,
   InteractionType,
   verifyKeyMiddleware,
@@ -94,6 +95,14 @@ async function postDueScheduledQuotes() {
 }
 
 setInterval(postDueScheduledQuotes, SCHEDULE_CHECK_MS);
+
+// Error replies are ephemeral: only the user who ran the command sees them.
+function sendError(res, content) {
+  return res.send({
+    type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+    data: { content, flags: InteractionResponseFlags.EPHEMERAL },
+  });
+}
 
 function hasStaffRole(member) {
   if (!member?.roles || !STAFF_ROLE_IDS.length) return false;
@@ -201,9 +210,10 @@ app.post('/interactions', verifyKeyMiddleware(process.env.PUBLIC_KEY), async fun
     if (name === 'ping') {
       try {
         const resp = await fetch(`${API_BASE_URL}/health`);
-        return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: resp.ok ? '🏓 Pong!' : '⚠️ API unreachable.' } });
+        if (!resp.ok) return sendError(res, 'API unreachable.');
+        return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: 'Pong!' } });
       } catch {
-        return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: '⚠️ API unreachable.' } });
+        return sendError(res, 'API unreachable.');
       }
     }
 
@@ -213,7 +223,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.PUBLIC_KEY), async fun
         const quote = await fetchGuildRandomQuote(API_BASE_URL, guildId);
         return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: formatQuote(quote) } });
       } catch {
-        return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: 'No quotes found.' } });
+        return sendError(res, 'No quotes found.');
       }
     }
 
@@ -227,14 +237,14 @@ app.post('/interactions', verifyKeyMiddleware(process.env.PUBLIC_KEY), async fun
         ).join('\n\n') || 'No results.';
         return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content } });
       } catch {
-        return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: 'Search failed.' } });
+        return sendError(res, 'Search failed.');
       }
     }
 
     // Add quote — open modal pre-populated with one example line
     if (name === 'addquote') {
       if (!hasStaffRole(req.body.member)) {
-        return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: 'Staff only.' } });
+        return sendError(res, 'Staff only.');
       }
 
       const authorDefault = req.body.member?.user?.username ?? '';
@@ -260,7 +270,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.PUBLIC_KEY), async fun
         ).join('\n\n') || 'No quotes.';
         return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content } });
       } catch {
-        return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: 'Error fetching quotes.' } });
+        return sendError(res, 'Error fetching quotes.');
       }
     }
 
@@ -274,7 +284,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.PUBLIC_KEY), async fun
         ).join('\n\n') || 'No quotes.';
         return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: `Page ${page}\n\n${content}` } });
       } catch {
-        return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: 'Error fetching quotes.' } });
+        return sendError(res, 'Error fetching quotes.');
       }
     }
 
@@ -282,9 +292,9 @@ app.post('/interactions', verifyKeyMiddleware(process.env.PUBLIC_KEY), async fun
     if (name === 'quotecount') {
       try {
         const count = await getGuildQuoteCount(API_BASE_URL, guildId);
-        return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: `📚 This server has **${count}** quote${count === 1 ? '' : 's'}.` } });
+        return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: `This server has **${count}** quote${count === 1 ? '' : 's'}.` } });
       } catch {
-        return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: 'Error fetching quote count.' } });
+        return sendError(res, 'Error fetching quote count.');
       }
     }
 
@@ -294,7 +304,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.PUBLIC_KEY), async fun
       const reply = content => res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content } });
 
       if (subcommand?.name !== 'status' && !hasStaffRole(req.body.member)) {
-        return reply('Staff only.');
+        return sendError(res, 'Staff only.');
       }
 
       try {
@@ -304,39 +314,39 @@ app.post('/interactions', verifyKeyMiddleware(process.env.PUBLIC_KEY), async fun
           const unit = subcommand.options.find(opt => opt.name === 'unit')?.value || 'hours';
           const intervalMinutes = every * UNIT_MINUTES[unit];
           if (intervalMinutes > MAX_INTERVAL_MINUTES) {
-            return reply('❌ The interval can be at most 30 days.');
+            return sendError(res, 'The interval can be at most 30 days.');
           }
           await setSchedule(API_BASE_URL, guildId, channelId, intervalMinutes);
-          return reply(`✅ A random quote will be posted in <#${channelId}> every ${formatInterval(intervalMinutes)}.`);
+          return reply(`A random quote will be posted in <#${channelId}> every ${formatInterval(intervalMinutes)}.`);
         }
 
         if (subcommand?.name === 'stop') {
           const deleted = await deleteSchedule(API_BASE_URL, guildId);
-          return reply(deleted ? '🛑 Scheduled quotes stopped.' : 'There is no quote schedule for this server.');
+          return reply(deleted ? 'Scheduled quotes stopped.' : 'There is no quote schedule for this server.');
         }
 
         if (subcommand?.name === 'status') {
           const schedule = await getSchedule(API_BASE_URL, guildId);
           if (!schedule) return reply('There is no quote schedule for this server.');
           const nextAt = Math.floor((new Date(schedule.last_sent_at).getTime() + schedule.interval_minutes * 60000) / 1000);
-          return reply(`⏰ Posting a random quote in <#${schedule.channel_id}> every ${formatInterval(schedule.interval_minutes)}.\nNext quote <t:${nextAt}:R>.`);
+          return reply(`Posting a random quote in <#${schedule.channel_id}> every ${formatInterval(schedule.interval_minutes)}.\nNext quote <t:${nextAt}:R>.`);
         }
       } catch (e) {
         console.error('Schedule error:', e);
-        return reply('❌ Failed to update the quote schedule.');
+        return sendError(res, 'Failed to update the quote schedule.');
       }
     }
 
     // Edit quote — pre-fill modal with existing data
     if (name === 'editquote') {
       if (!hasStaffRole(req.body.member)) {
-        return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: 'Staff only.' } });
+        return sendError(res, 'Staff only.');
       }
       const quoteId = data.options.find(opt => opt.name === 'quote_id')?.value;
       try {
         const quote = await getQuote(API_BASE_URL, quoteId);
         if (quote.guild_id !== guildId) {
-          return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: 'Quote not from this guild.' } });
+          return sendError(res, 'Quote not from this guild.');
         }
 
         // Serialise existing lines back into the compact textarea format so the
@@ -360,25 +370,25 @@ app.post('/interactions', verifyKeyMiddleware(process.env.PUBLIC_KEY), async fun
         });
       } catch (e) {
         console.error(e);
-        return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: 'Quote not found.' } });
+        return sendError(res, 'Quote not found.');
       }
     }
 
     // Delete quote
     if (name === 'deletequote') {
       if (!hasStaffRole(req.body.member)) {
-        return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: 'Staff only.' } });
+        return sendError(res, 'Staff only.');
       }
       const quoteId = data.options.find(opt => opt.name === 'quote_id')?.value;
       try {
         const quote = await getQuote(API_BASE_URL, quoteId);
         if (quote.guild_id !== guildId) {
-          return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: 'Quote not from this guild.' } });
+          return sendError(res, 'Quote not from this guild.');
         }
         await deleteQuote(API_BASE_URL, quoteId);
         return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: 'Quote deleted.' } });
       } catch {
-        return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: 'Delete failed or not found.' } });
+        return sendError(res, 'Delete failed or not found.');
       }
     }
   }
@@ -386,7 +396,7 @@ app.post('/interactions', verifyKeyMiddleware(process.env.PUBLIC_KEY), async fun
   // ── Modal submissions ─────────────────────────────────────────────────────
   if (type === InteractionType.MODAL_SUBMIT) {
     if (!hasStaffRole(req.body.member)) {
-      return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: 'Staff only.' } });
+      return sendError(res, 'Staff only.');
     }
 
     // Both create and edit modals share the same 3-component layout built by
@@ -397,25 +407,20 @@ app.post('/interactions', verifyKeyMiddleware(process.env.PUBLIC_KEY), async fun
     const lines    = parseCompactLines(linesRaw);
 
     if (lines.length === 0) {
-      return res.send({
-        type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
-        data: {
-          content: '❌ No valid lines found. Each line must follow the format:\n`Speaker (Nickname): Quote text`\nor\n`Speaker: Quote text`',
-        },
-      });
+      return sendError(res, 'No valid lines found. Each line must follow the format:\n`Speaker (Nickname): Quote text`\nor\n`Speaker: Quote text`');
     }
 
     // Create
     if (data.custom_id === 'quote_create_modal') {
       try {
-        await createQuote(API_BASE_URL, { guild_id: guildId, author, context, lines });
+        const quote = await createQuote(API_BASE_URL, { guild_id: guildId, author, context, lines });
         return res.send({
           type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
-          data: { content: `✅ Quote created with ${lines.length} line${lines.length !== 1 ? 's' : ''}!` },
+          data: { content: formatQuote(quote), allowed_mentions: { parse: [] } },
         });
       } catch (e) {
         console.error('Create error:', e);
-        return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: '❌ Failed to create quote.' } });
+        return sendError(res, 'Failed to create quote.');
       }
     }
 
@@ -426,11 +431,11 @@ app.post('/interactions', verifyKeyMiddleware(process.env.PUBLIC_KEY), async fun
         await editQuote(API_BASE_URL, quoteId, { author, context, lines });
         return res.send({
           type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
-          data: { content: `✅ Quote updated (${lines.length} line${lines.length !== 1 ? 's' : ''})!` },
+          data: { content: `Quote updated (${lines.length} line${lines.length !== 1 ? 's' : ''})!` },
         });
       } catch (e) {
         console.error('Edit error:', e);
-        return res.send({ type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE, data: { content: '❌ Failed to update quote.' } });
+        return sendError(res, 'Failed to update quote.');
       }
     }
   }
